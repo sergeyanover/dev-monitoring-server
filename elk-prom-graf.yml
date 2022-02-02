@@ -1,0 +1,145 @@
+version: '3.8'
+
+services:
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.16.3
+    container_name: elasticsearch-elk
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+      ELASTIC_PASSWORD: mypass
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl --silent --fail localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - ./conf/elk/elasticsearch.yml:/usr/share/elasticsearch/config/elasticsearch.yml:ro,z
+      - ./data:/usr/share/elasticsearch/data
+    networks:
+      - monitor
+
+  logstash:
+    image: docker.elastic.co/logstash/logstash:7.16.3
+    container_name: logstash-elk
+    ports:
+      - "5044:5044"
+      - "5000:5000/tcp"
+      - "5000:5000/udp"
+      - "9600:9600"
+    environment:
+      LS_JAVA_OPTS: "-Xmx256m -Xms256m"
+    volumes:
+      - ./conf/elk/logstash.yml:/usr/share/logstash/config/logstash.yml:ro,z
+      - ./pipeline:/usr/share/logstash/pipeline:ro,z
+    depends_on:
+      - elasticsearch
+    networks:
+      - monitor
+        
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.16.3
+    container_name: kibana-elk
+    ports:
+      - "5601:5601"
+    volumes:
+      - ./conf/elk/kibana.yml:/usr/share/kibana/config/kibana.yml:ro,z
+    depends_on:
+      - elasticsearch
+    networks:
+      - monitor
+
+  grafana:
+    image:  grafana/grafana:8.3.4
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    restart: always
+    networks:
+      - monitor
+    volumes:
+      - ./conf/grafana/datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yaml
+      - ./conf/grafana/dashboards:/dashboards
+      - ./data/grafana:/var/lib/grafana
+    environment:
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel,grafana-polystat-panel
+      - GF_SECURITY_COOKIE_SECURE="true"
+      - GF_SERVER_DOMAIN=domain.local
+      - GF_SERVER_ROOT_URL=http://domain.local/
+      - GF_DEFAULT_INSTANCE_NAME=devmonitor
+      - GF_AUTH_PROXY_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+    depends_on:
+      - prometheus
+
+  alertmanager:
+    image: prom/alertmanager:v0.23.0
+    container_name: alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./data/alertmanager:/data
+      - ./conf/alertmanager:/config
+    command: 
+      - --config.file=/config/alertmanager.yml 
+      - --log.level=debug
+    networks:
+      - monitor
+    depends_on:
+      - prometheus
+
+  prometheus:
+    image: prom/prometheus:v2.33.0
+    container_name: prometheus
+    networks:
+      - monitor
+    ports:
+      - "9090:9090"
+    restart: always
+    volumes:
+      - ./data/prometheus:/prometheus
+      - ./conf/prometheus:/etc/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.console.libraries=/usr/share/prometheus/console_libraries
+      - --web.console.templates=/usr/share/prometheus/consoles
+      - --web.route-prefix=/
+      - --web.external-url=http://domain.local
+    depends_on:
+      - node-exporter
+
+  node-exporter:
+    image: prom/node-exporter:v0.18.1
+    container_name: node-exporter
+    restart: always
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/)'
+    ports:
+      - "9100:9100"
+    networks:
+      - monitor
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+
+volumes:
+  data:
+    driver: local
+
+networks:
+  monitor:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.16.1.0/24
+

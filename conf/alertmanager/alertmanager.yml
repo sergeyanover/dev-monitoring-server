@@ -1,0 +1,16 @@
+route:
+  receiver: 'mail'
+  repeat_interval: 1h
+  group_by: [ alertname ]
+
+
+receivers:
+  - name: 'mail'
+    email_configs:
+      - smarthost: 'smtp.gmail.com:587'
+        auth_username: 'donotreply@gmail.com'
+        auth_identity: 'donotreply@gmail.com'
+        auth_password: "password"
+        from: 'donotreply@gmail.com'
+        to: 'youremail@gmail.com'
+        send_resolved: true
